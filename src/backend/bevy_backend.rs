@@ -374,16 +374,11 @@ impl TerminalBuilder {
 fn pixmap_to_rgba8(pixmap: tiny_skia::Pixmap) -> Vec<u32> {
     pixmap
         .data()
-        .chunks_exact(4)
-        .map(|rgba| {
-            // tiny-skia uses RGBA byte order
-            let r = rgba[0];
-            let g = rgba[1];
-            let b = rgba[2];
-            let a = rgba[3];
-            // Pack into u32 (little-endian RGBA)
-            u32::from_le_bytes([r, g, b, a])
-        })
+        .as_chunks::<4>()
+        .0
+        .iter()
+        // tiny-skia uses RGBA byte order; pack into u32 (little-endian RGBA)
+        .map(|&rgba| u32::from_le_bytes(rgba))
         .collect()
 }
 

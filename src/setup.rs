@@ -1292,7 +1292,7 @@ mod tui_flush_tests {
         }
         let pixels = pixels.expect("readback never completed - render world stalled");
 
-        let has_red_pixel = pixels.chunks_exact(4).any(|px| px[0] > 200 && px[2] < 60);
+        let has_red_pixel = pixels.as_chunks::<4>().0.iter().any(|px| px[0] > 200 && px[2] < 60);
         assert!(
             has_red_pixel,
             "rendered texture does not contain the drawn red background"
@@ -1421,12 +1421,14 @@ mod tui_flush_tests {
         let row1_after = &pixels_after[row0_bytes_len..];
         assert!(
             row1_before
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .any(|px| px[0..3] == [0, 128, 0]),
             "row 1 must start out green"
         );
         assert!(
-            row1_after.chunks_exact(4).any(|px| px[0..3] == [0, 0, 255]),
+            row1_after.as_chunks::<4>().0.iter().any(|px| px[0..3] == [0, 0, 255]),
             "row 1 must show blue after being redrawn"
         );
     }
