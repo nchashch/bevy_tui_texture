@@ -2,8 +2,8 @@ use std::num::NonZeroUsize;
 use std::ops::Deref;
 
 use evictor::Lru;
-use tracing::info;
 use ratatui::style::Modifier;
+use tracing::info;
 
 use crate::Fonts;
 

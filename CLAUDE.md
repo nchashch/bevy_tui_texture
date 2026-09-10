@@ -109,8 +109,9 @@ All three share the same per-frame path below.
    `Backend::flush()`, but `BevyTerminalBackend::flush()` early-returns
    before any shaping/vertex work when nothing changed. Calling `draw`
    every frame is the intended pattern.
-2. If dirty, the plugin's `gpu_flush_system` (main world, pure CPU)
-   extracts a `TerminalDrawPayload` (pending glyph rasterizations +
+2. If dirty, the plugin's `gpu_flush_system` (main world, pure CPU,
+   ordered after `TerminalSystemSet::Render` so every draw in that set is
+   flushed the same frame) extracts a `TerminalDrawPayload` (pending glyph rasterizations +
    vertex/index data); it also applies any pending `Tui::request_resize`
    first (recreates the destination `Image` in place at the same handle,
    syncs `TerminalDimensions`; `resize_world_quad_meshes` then fixes a
@@ -142,6 +143,12 @@ only CPU readback is the explicit opt-in `Tui::read_back_blocking`.
   by `Fonts::identity()`: terminals sharing a `Fonts` share one atlas and
   rasterize each glyph once. Evicted via the `LiveFontKeys` liveness set
   once no live `Tui` reports that font key.
+- Glyph uploads (`PendingFontUploads`) are never dropped: the CPU-side
+  atlas marks a glyph cached the moment it's rasterized, so an upload that
+  arrives in a frame with no draw for its font (payload flushed later, or
+  destination not prepared yet) is uploaded to the existing atlas anyway,
+  or kept until the font's GPU state exists. Dropping one leaves that glyph
+  invisible for good.
 
 ### Partial redraw
 
@@ -171,7 +178,14 @@ rows. Glyph-atlas eviction is LRU (`evictor` crate).
   (src/input/ray.rs) when both features are on; touch fallback (see
   Gotchas)
 - **src/fonts.rs** — TrueType via rustybuzz; CJK; metrics
-  `min_width_px()` / `height_px()` for texture sizing
+  `min_width_px()` / `height_px()` for texture sizing. Fallback is per
+  cell: `shape_row` splits each row into `FontRun`s (`font_runs`, via
+  `Fonts::font_for_cell`) and shapes each run with its own font. The cell
+  width is the minimum `m` advance over all fonts, so a glyph from a wider
+  fallback font is squeezed horizontally to fit (`fit_to_cells`). A
+  symbols-only font with no `m` (e.g. Symbols Nerd Font) is measured by its
+  `.notdef` advance and can shrink every cell — prefer a patched
+  "Nerd Font Mono" primary.
 - **src/utils/** — `text_atlas.rs` (glyph cache texture),
   `plan_cache.rs` (shaping cache)
 

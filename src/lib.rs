@@ -106,6 +106,7 @@
 //! - `resize` - `Tui::request_resize` following the window size live
 //! - `transparent_world_quad` - HUD-style see-through screen
 //!   (`transparent_reset_bg` + `AlphaMode::Blend`)
+//!   cell-by-cell into `Tui::draw`'s buffer (native only; see TERMINAL.md)
 //! - `benchmark` - Rendering throughput
 //! - `wasm_demo` - the retro CRT scene running in a browser (WebGL2); see
 //!   `docs/README.md` for build/deploy/preview instructions
@@ -211,11 +212,11 @@ pub use fonts::{Font, Fonts, TerminalFontAsset};
 pub use bevy_plugin::{TerminalDimensions, TerminalPlugin};
 
 // Re-export the ECS-native terminal API
-pub use setup::{TuiFontSource, HitRegions, TerminalConfig, Tui, TuiKind, TuiRequest, TuiSurface};
 #[cfg(feature = "2d")]
 pub use setup::TuiUi;
 #[cfg(feature = "3d")]
 pub use setup::{AttachMaterial, AttachTerminal};
+pub use setup::{HitRegions, TerminalConfig, Tui, TuiFontSource, TuiKind, TuiRequest, TuiSurface};
 
 // Error types
 
@@ -244,13 +245,13 @@ pub mod prelude {
     pub use crate::setup::TerminalTexture;
 
     // ECS-native terminal API
-    pub use crate::setup::{
-        TuiFontSource, HitRegions, TerminalConfig, Tui, TuiKind, TuiRequest, TuiSurface,
-    };
     #[cfg(feature = "2d")]
     pub use crate::setup::TuiUi;
     #[cfg(feature = "3d")]
     pub use crate::setup::{AttachMaterial, AttachTerminal};
+    pub use crate::setup::{
+        HitRegions, TerminalConfig, Tui, TuiFontSource, TuiKind, TuiRequest, TuiSurface,
+    };
 
     // Backend and builders
     pub use crate::{BevyTerminalBackend, Font, Fonts, TerminalBuilder, TerminalFontAsset};

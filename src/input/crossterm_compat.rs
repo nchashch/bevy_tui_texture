@@ -9,7 +9,9 @@
 //! `InputEvent::Resize`'s doc comment), while crossterm's carries the new
 //! cell size; the units simply don't correspond.
 
-use super::{InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind};
+use super::{
+    InputEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use bevy::input::mouse::MouseButton;
 use crossterm::event as ct;
 
@@ -260,9 +262,6 @@ mod tests {
             pixels: bevy::math::UVec2::new(800, 600),
         };
         assert_eq!(event.to_crossterm(), None);
-        assert_eq!(
-            InputEvent::from_crossterm(&ct::Event::Resize(80, 24)),
-            None
-        );
+        assert_eq!(InputEvent::from_crossterm(&ct::Event::Resize(80, 24)), None);
     }
 }

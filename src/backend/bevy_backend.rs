@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use crate::backend::rasterize::rasterize_glyph;
 use crate::backend::TextBgVertexMember;
 use crate::backend::TextVertexMember;
 use crate::backend::Viewport;
+use crate::backend::rasterize::rasterize_glyph;
 use crate::colors::Rgb;
 use crate::fonts::Fonts;
 use crate::utils::text_atlas::Key;
@@ -31,6 +31,140 @@ struct RowGeometry {
     /// different glyph since - the row must be treated as dirty and
     /// regenerated rather than reused.
     atlas_generation: u64,
+}
+
+/// A maximal stretch of a row whose cells all resolve to the same font
+/// (and fake styling), shaped as one rustybuzz run. `bytes` indexes the
+/// row string `shape_row` builds by concatenating the cells' symbols.
+struct FontRun<'f> {
+    font: &'f crate::fonts::Font,
+    fake_bold: bool,
+    fake_italic: bool,
+    bytes: std::ops::Range<usize>,
+}
+
+/// Splits a row into [`FontRun`]s via [`Fonts::font_for_cell`]. Shaping a
+/// whole row with a single font would render every char that font lacks
+/// as a missing glyph even when a fallback font has it. A cell with an
+/// empty symbol (the hidden half of a wide char) contributes no text, so
+/// it just extends whichever run it follows.
+fn font_runs<'f>(fonts: &'f Fonts, cells: &[Cell]) -> Vec<FontRun<'f>> {
+    let mut runs: Vec<FontRun<'f>> = Vec::new();
+    let mut end = 0;
+    for cell in cells {
+        let start = end;
+        end += cell.symbol().len();
+        if start == end {
+            if let Some(run) = runs.last_mut() {
+                run.bytes.end = end;
+            }
+            continue;
+        }
+        let (font, fake_bold, fake_italic) = fonts.font_for_cell(cell);
+        // Fake styling only applies with real per-style font slots.
+        let styled = cfg!(feature = "bold_italic_fonts");
+        let (fake_bold, fake_italic) = (styled && fake_bold, styled && fake_italic);
+        match runs.last_mut() {
+            Some(run)
+                if run.font.id() == font.id()
+                    && run.fake_bold == fake_bold
+                    && run.fake_italic == fake_italic =>
+            {
+                run.bytes.end = end;
+            }
+            _ => runs.push(FontRun {
+                font,
+                fake_bold,
+                fake_italic,
+                bytes: start..end,
+            }),
+        }
+    }
+    runs
+}
+
+#[cfg(test)]
+mod font_run_tests {
+    use super::*;
+    use crate::fonts::Font;
+
+    const MPLUS: &[u8] = include_bytes!("../../examples/assets/fonts/Mplus1Code-Regular.ttf");
+    const FUSION: &[u8] =
+        include_bytes!("../../examples/assets/fonts/fusion-pixel-10px-monospaced-ja.ttf");
+
+    fn cells(symbols: &[&str]) -> Vec<Cell> {
+        symbols
+            .iter()
+            .map(|symbol| {
+                let mut cell = Cell::default();
+                cell.set_symbol(symbol);
+                cell
+            })
+            .collect()
+    }
+
+    /// Regression: `shape_row` used to shape the whole row with the first
+    /// cell's font, so a fallback font was never used past column 0.
+    #[test]
+    fn chars_missing_from_the_first_font_get_a_fallback_run() {
+        // M+ (tried first) has no Hangul; fusion-pixel (last resort) does.
+        let mplus = Font::new(MPLUS).expect("M+ parses");
+        let fusion = Font::new(FUSION).expect("fusion-pixel parses");
+        let (mplus_id, fusion_id) = (mplus.id(), fusion.id());
+        let mut fonts = Fonts::new(fusion, 16);
+        fonts.add_regular_fonts([mplus]);
+
+        let row = cells(&["a", "b", "한", "", "c", "d"]);
+        let runs: Vec<_> = font_runs(&fonts, &row)
+            .iter()
+            .map(|run| (run.font.id(), run.bytes.clone()))
+            .collect();
+        // a b | 한 (3 bytes) + its empty spacer | c d
+        assert_eq!(
+            runs,
+            vec![(mplus_id, 0..2), (fusion_id, 2..5), (mplus_id, 5..7)]
+        );
+    }
+
+    #[test]
+    fn a_single_font_row_is_one_run() {
+        let fonts = Fonts::new(Font::new(MPLUS).expect("M+ parses"), 16);
+        let runs = font_runs(&fonts, &cells(&["h", "i", " ", "あ", ""]));
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].bytes, 0..6);
+    }
+}
+
+/// Horizontal squeeze for a glyph whose advance (`advance_px`) is wider
+/// than the cells it occupies (`cells_px`). The cell width comes from the
+/// narrowest font, so a wider fallback font's glyphs would otherwise have
+/// their right side clipped. Overflow of a pixel or less is left alone:
+/// a font whose advance merely rounds down to the cell width (typically
+/// the primary one) renders exactly as it always has.
+fn fit_to_cells(advance_px: f32, cells_px: f32) -> f32 {
+    if advance_px > cells_px + 1.0 {
+        cells_px / advance_px
+    } else {
+        1.0
+    }
+}
+
+#[cfg(test)]
+mod fit_to_cells_tests {
+    use super::fit_to_cells;
+
+    #[test]
+    fn a_rounded_down_advance_is_not_squeezed() {
+        assert_eq!(fit_to_cells(6.4, 6.0), 1.0);
+        assert_eq!(fit_to_cells(12.8, 12.0), 1.0);
+        assert_eq!(fit_to_cells(0.0, 6.0), 1.0); // synthesized fast-path glyphs
+    }
+
+    #[test]
+    fn a_wider_fallback_glyph_is_squeezed_to_its_cells() {
+        assert_eq!(fit_to_cells(8.0, 6.0), 0.75);
+        assert_eq!(fit_to_cells(16.0, 12.0), 0.75); // wide char, two cells
+    }
 }
 
 /// A ratatui backend optimized for Bevy integration.
@@ -416,12 +550,7 @@ impl BevyTerminalBackend {
         let cell_height_px = self.fonts.height_px() as f32;
 
         for y in 0..height {
-            let redraw = full
-                || self
-                    .rows_dirty_since_take
-                    .get(y)
-                    .copied()
-                    .unwrap_or(false);
+            let redraw = full || self.rows_dirty_since_take.get(y).copied().unwrap_or(false);
             if !redraw {
                 continue;
             }
@@ -461,7 +590,9 @@ impl BevyTerminalBackend {
             }
         }
 
-        self.rows_dirty_since_take.iter_mut().for_each(|d| *d = false);
+        self.rows_dirty_since_take
+            .iter_mut()
+            .for_each(|d| *d = false);
         self.full_redraw_needed = false;
 
         crate::backend::TerminalDrawPayload {
@@ -592,24 +723,17 @@ impl BevyTerminalBackend {
             return (bg_vertices, text_vertices);
         }
 
-        // For now, use font_for_cell on the first cell
-        #[cfg(feature = "bold_italic_fonts")]
-        let (font, _cell_fake_bold, _cell_fake_italic) =
-            self.fonts.font_for_cell(&row_cells[0]);
-
-        #[cfg(not(feature = "bold_italic_fonts"))]
-        let (font, _cell_fake_bold, _cell_fake_italic) = {
-            let (f, _, _) = self.fonts.font_for_cell(&row_cells[0]);
-            (f, false, false) // Disable fake styling when feature is off
-        };
+        // One rustybuzz run per stretch of cells resolving to the same
+        // font, so each char is shaped by a font that actually has it.
+        let runs = font_runs(&self.fonts, row_cells);
 
         // ASCII fast path (IMPROVEMENT.md A3, opt-in via the
         // `ascii_fast_shaping` feature - compiled out entirely otherwise,
         // and requires `bold_italic_fonts` to be off, since that feature
         // makes per-cell font selection meaningful while this path assumes
-        // the whole row shares `font`, exactly like the slow path already
-        // does whenever `bold_italic_fonts` is off - see `cell_font`
-        // below). Builds synthetic glyph info/position pairs straight from
+        // the whole row shares one font - which is also why it only runs
+        // for a row that `font_runs` resolved to a single run). Builds
+        // synthetic glyph info/position pairs straight from
         // the font's cmap instead of invoking rustybuzz at all, then feeds
         // them into the SAME per-glyph loop below as real shaped output -
         // no duplication of the atlas/vertex-emission logic, so there is
@@ -619,6 +743,13 @@ impl BevyTerminalBackend {
         #[cfg(all(feature = "ascii_fast_shaping", not(feature = "bold_italic_fonts")))]
         let fast_path: Option<(Vec<rustybuzz::GlyphInfo>, Vec<rustybuzz::GlyphPosition>)> = 'fast: {
             use rustybuzz::ttf_parser::Face;
+
+            // Synthesized glyphs carry no run information - single-font
+            // rows only.
+            let [run] = runs.as_slice() else {
+                break 'fast None;
+            };
+            let font = run.font;
 
             let mut infos = Vec::with_capacity(row_cells.len());
             let mut positions = Vec::with_capacity(row_cells.len());
@@ -658,30 +789,42 @@ impl BevyTerminalBackend {
         #[cfg(not(all(feature = "ascii_fast_shaping", not(feature = "bold_italic_fonts"))))]
         let fast_path: Option<(Vec<rustybuzz::GlyphInfo>, Vec<rustybuzz::GlyphPosition>)> = None;
 
-        let (infos, positions): (Vec<rustybuzz::GlyphInfo>, Vec<rustybuzz::GlyphPosition>) =
-            if let Some(fast) = fast_path {
-                fast
-            } else {
-                // Shape the row
+        // `glyph_runs[i]` indexes the run glyph `i` was shaped in - that
+        // run's font owns the glyph id and supplies its metrics.
+        let (infos, positions, glyph_runs) = if let Some((infos, positions)) = fast_path {
+            let glyph_runs = vec![0; infos.len()];
+            (infos, positions, glyph_runs)
+        } else {
+            let mut infos = Vec::new();
+            let mut positions = Vec::new();
+            let mut glyph_runs = Vec::new();
+            for (run_idx, run) in runs.iter().enumerate() {
                 let mut buffer = std::mem::take(&mut self.buffer);
                 buffer.clear();
-                for (idx, ch) in self.row.char_indices() {
-                    buffer.add(ch, idx as u32);
+                // Clusters stay byte offsets into the whole row - what
+                // `rowmap` is indexed by.
+                for (idx, ch) in self.row[run.bytes.clone()].char_indices() {
+                    buffer.add(ch, (run.bytes.start + idx) as u32);
                 }
-
-                let glyph_buffer =
-                    shape_with_plan(font.font(), shared.plan_cache.get(font, &mut buffer), buffer);
-                let infos = glyph_buffer.glyph_infos().to_vec();
-                let positions = glyph_buffer.glyph_positions().to_vec();
+                let glyph_buffer = shape_with_plan(
+                    run.font.font(),
+                    shared.plan_cache.get(run.font, &mut buffer),
+                    buffer,
+                );
+                infos.extend_from_slice(glyph_buffer.glyph_infos());
+                positions.extend_from_slice(glyph_buffer.glyph_positions());
+                glyph_runs.resize(infos.len(), run_idx);
                 self.buffer = glyph_buffer.clear();
-                (infos, positions)
-            };
+            }
+            (infos, positions, glyph_runs)
+        };
 
         // Process shaped (or synthesized) glyphs
-        let metrics = font.font();
-        let advance_scale = self.fonts.height_px() as f32 / metrics.height() as f32;
+        for ((info, pos), &run_idx) in infos.iter().zip(&positions).zip(&glyph_runs) {
+            let run = &runs[run_idx];
+            let metrics = run.font.font();
+            let advance_scale = self.fonts.height_px() as f32 / metrics.height() as f32;
 
-        for (info, pos) in infos.iter().zip(positions.iter()) {
             let cluster = info.cluster as usize;
             if cluster >= self.rowmap.len() {
                 continue;
@@ -695,12 +838,8 @@ impl BevyTerminalBackend {
             let cell = &row_cells[cell_idx];
             let _glyph_id = GlyphId(info.glyph_id as u16);
 
-            // Use per-cell font selection for proper styling
-            #[cfg(feature = "bold_italic_fonts")]
-            let (cell_font, cell_fake_bold, cell_fake_italic) = self.fonts.font_for_cell(cell);
-
-            #[cfg(not(feature = "bold_italic_fonts"))]
-            let (cell_font, cell_fake_bold, cell_fake_italic) = (font, false, false);
+            let (cell_font, cell_fake_bold, cell_fake_italic) =
+                (run.font, run.fake_bold, run.fake_italic);
 
             // Calculate character width using unicode-width for precise glyph width
             use unicode_width::UnicodeWidthChar;
@@ -732,8 +871,8 @@ impl BevyTerminalBackend {
             // For font glyphs: use shaped glyph ID + actual font
 
             #[cfg(feature = "bold_italic_fonts")]
-            let style = cell.modifier
-                & (ratatui::style::Modifier::BOLD | ratatui::style::Modifier::ITALIC);
+            let style =
+                cell.modifier & (ratatui::style::Modifier::BOLD | ratatui::style::Modifier::ITALIC);
 
             #[cfg(not(feature = "bold_italic_fonts"))]
             let style = ratatui::style::Modifier::empty();
@@ -775,8 +914,11 @@ impl BevyTerminalBackend {
                         );
                     }
                 } else {
+                    let fit_x =
+                        fit_to_cells(pos.x_advance as f32 * advance_scale, glyph_width_px as f32);
+
                     // Calculate glyph bearing offset to apply during rasterization
-                    let bearing_offset_x = pos.x_offset as f32 * advance_scale;
+                    let bearing_offset_x = pos.x_offset as f32 * advance_scale * fit_x;
 
                     // Don't apply fake styling to emoji characters to avoid distortion
                     let final_fake_italic = cell_fake_italic && !is_emoji;
@@ -791,6 +933,7 @@ impl BevyTerminalBackend {
                         advance_scale,
                         glyph_width_px,   // Use actual glyph width
                         bearing_offset_x, // Apply offset in atlas
+                        fit_x,
                     );
 
                     shared.pending_cache_updates.push((rect, image));
@@ -821,13 +964,12 @@ impl BevyTerminalBackend {
                 c2c(cell.fg, self.reset_fg)
             };
 
-            let bg_alpha = if self.transparent_reset_bg
-                && matches!(bg_source, ratatui::style::Color::Reset)
-            {
-                0
-            } else {
-                255
-            };
+            let bg_alpha =
+                if self.transparent_reset_bg && matches!(bg_source, ratatui::style::Color::Reset) {
+                    0
+                } else {
+                    255
+                };
             let [r, g, b] = bg_color;
             let bg_color_u32 = u32::from_be_bytes([r, g, b, bg_alpha]);
 
@@ -1228,7 +1370,10 @@ mod tests {
 
         // First-ever take on this backend is always full (no synthesized
         // row-clear quad), so this is exactly one quad per cell.
-        assert!(payload.is_full(), "the first take on a fresh backend must be full");
+        assert!(
+            payload.is_full(),
+            "the first take on a fresh backend must be full"
+        );
         assert_eq!(
             payload.bg_vertices.len(),
             8,
@@ -1273,7 +1418,10 @@ mod tests {
         RatatuiBackend::flush(&mut backend).expect("flush failed");
         let payload = backend.take_draw_payload();
 
-        assert!(!payload.bg_vertices.is_empty(), "flush must generate vertices");
+        assert!(
+            !payload.bg_vertices.is_empty(),
+            "flush must generate vertices"
+        );
         for vertex in &payload.bg_vertices {
             assert_eq!(
                 vertex.bg_color & 0xFF,
@@ -1300,12 +1448,14 @@ mod tests {
         cell.fg = Color::Reset; // effective background under REVERSED
         cell.bg = Color::Rgb(1, 2, 3); // effective foreground under REVERSED - must not matter
 
-        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter())
-            .expect("draw failed");
+        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter()).expect("draw failed");
         RatatuiBackend::flush(&mut backend).expect("flush failed");
         let payload = backend.take_draw_payload();
 
-        assert!(!payload.bg_vertices.is_empty(), "flush must generate vertices");
+        assert!(
+            !payload.bg_vertices.is_empty(),
+            "flush must generate vertices"
+        );
         for vertex in &payload.bg_vertices {
             assert_eq!(
                 vertex.bg_color & 0xFF,
@@ -1331,8 +1481,7 @@ mod tests {
 
         // First draw: content changes (empty -> "a"), so this flush must do
         // real work and produce vertices.
-        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter())
-            .expect("draw failed");
+        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter()).expect("draw failed");
         RatatuiBackend::flush(&mut backend).expect("flush failed");
         let payload = backend.take_draw_payload();
         assert!(
@@ -1377,7 +1526,10 @@ mod tests {
     // ========================================================================
 
     fn sorted_bytes<T: bytemuck::Pod>(items: &[T]) -> Vec<Vec<u8>> {
-        let mut bytes: Vec<Vec<u8>> = items.iter().map(|i| bytemuck::bytes_of(i).to_vec()).collect();
+        let mut bytes: Vec<Vec<u8>> = items
+            .iter()
+            .map(|i| bytemuck::bytes_of(i).to_vec())
+            .collect();
         bytes.sort();
         bytes
     }
@@ -1447,7 +1599,10 @@ mod tests {
         // LRU entries and returns the SAME UV rects it already handed out,
         // making this a true apples-to-apples comparison against the
         // incremental flush above.
-        backend.dirty_rows.iter_mut().for_each(|dirty| *dirty = true);
+        backend
+            .dirty_rows
+            .iter_mut()
+            .for_each(|dirty| *dirty = true);
         backend.cells_changed_last_draw = true;
         RatatuiBackend::flush(&mut backend).expect("flush failed");
 
@@ -1485,12 +1640,14 @@ mod tests {
         cell.set_symbol("a");
         cell.bg = Color::Rgb(10, 20, 30);
 
-        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter())
-            .expect("draw failed");
+        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter()).expect("draw failed");
         RatatuiBackend::flush(&mut backend).expect("flush failed");
         let payload = backend.take_draw_payload();
 
-        assert!(payload.is_full(), "the very first take must be a full payload");
+        assert!(
+            payload.is_full(),
+            "the very first take must be a full payload"
+        );
     }
 
     #[test]
@@ -1510,7 +1667,12 @@ mod tests {
         let row_c = cell_with_symbol("C");
         RatatuiBackend::draw(
             &mut backend,
-            [(0u16, 0u16, &row_a), (0u16, 1u16, &row_b), (0u16, 2u16, &row_c)].into_iter(),
+            [
+                (0u16, 0u16, &row_a),
+                (0u16, 1u16, &row_b),
+                (0u16, 2u16, &row_c),
+            ]
+            .into_iter(),
         )
         .expect("draw failed");
         RatatuiBackend::flush(&mut backend).expect("flush failed");
@@ -1523,7 +1685,10 @@ mod tests {
         RatatuiBackend::flush(&mut backend).expect("flush failed");
         let payload = backend.take_draw_payload();
 
-        assert!(!payload.is_full(), "a single-row change must take a partial payload");
+        assert!(
+            !payload.is_full(),
+            "a single-row change must take a partial payload"
+        );
 
         let cell_height_px = backend.fonts.height_px() as f32;
         let y0 = 1.0 * cell_height_px;
@@ -1573,8 +1738,11 @@ mod tests {
 
         let mut cell_bottom_changed = Cell::default();
         cell_bottom_changed.set_symbol("Z");
-        RatatuiBackend::draw(&mut backend, [(0u16, 1u16, &cell_bottom_changed)].into_iter())
-            .expect("draw failed");
+        RatatuiBackend::draw(
+            &mut backend,
+            [(0u16, 1u16, &cell_bottom_changed)].into_iter(),
+        )
+        .expect("draw failed");
         RatatuiBackend::flush(&mut backend).expect("flush failed");
         let payload = backend.take_draw_payload();
 
@@ -1595,18 +1763,19 @@ mod tests {
 
         let mut cell = Cell::default();
         cell.set_symbol("a");
-        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter())
-            .expect("draw failed");
+        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter()).expect("draw failed");
         RatatuiBackend::flush(&mut backend).expect("flush failed");
         let _ = backend.take_draw_payload();
 
         backend.resize(2, 2);
-        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter())
-            .expect("draw failed");
+        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter()).expect("draw failed");
         RatatuiBackend::flush(&mut backend).expect("flush failed");
         let payload = backend.take_draw_payload();
 
-        assert!(payload.is_full(), "the first take after a resize must be full");
+        assert!(
+            payload.is_full(),
+            "the first take after a resize must be full"
+        );
     }
 
     #[test]
@@ -1617,18 +1786,19 @@ mod tests {
 
         let mut cell = Cell::default();
         cell.set_symbol("a");
-        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter())
-            .expect("draw failed");
+        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter()).expect("draw failed");
         RatatuiBackend::flush(&mut backend).expect("flush failed");
         let _ = backend.take_draw_payload();
 
         RatatuiBackend::clear(&mut backend).expect("clear failed");
-        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter())
-            .expect("draw failed");
+        RatatuiBackend::draw(&mut backend, [(0u16, 0u16, &cell)].into_iter()).expect("draw failed");
         RatatuiBackend::flush(&mut backend).expect("flush failed");
         let payload = backend.take_draw_payload();
 
-        assert!(payload.is_full(), "the first take after a clear must be full");
+        assert!(
+            payload.is_full(),
+            "the first take after a clear must be full"
+        );
     }
 
     #[test]

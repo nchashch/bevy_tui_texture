@@ -160,9 +160,10 @@ impl TerminalTexture {
             bevy::render::render_resource::TextureFormat::Rgba8Unorm,
             bevy::asset::RenderAssetUsages::RENDER_WORLD,
         );
-        image.texture_descriptor.usage = bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT
-            | bevy::render::render_resource::TextureUsages::TEXTURE_BINDING
-            | bevy::render::render_resource::TextureUsages::COPY_SRC;
+        image.texture_descriptor.usage =
+            bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT
+                | bevy::render::render_resource::TextureUsages::TEXTURE_BINDING
+                | bevy::render::render_resource::TextureUsages::COPY_SRC;
         let image_handle = images.add(image);
 
         // Create backend - pure CPU construction, no Device/Queue needed.
@@ -239,9 +240,10 @@ impl TerminalTexture {
             bevy::render::render_resource::TextureFormat::Rgba8Unorm,
             bevy::asset::RenderAssetUsages::RENDER_WORLD,
         );
-        image.texture_descriptor.usage = bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT
-            | bevy::render::render_resource::TextureUsages::TEXTURE_BINDING
-            | bevy::render::render_resource::TextureUsages::COPY_SRC;
+        image.texture_descriptor.usage =
+            bevy::render::render_resource::TextureUsages::RENDER_ATTACHMENT
+                | bevy::render::render_resource::TextureUsages::TEXTURE_BINDING
+                | bevy::render::render_resource::TextureUsages::COPY_SRC;
         images
             .insert(&self.image_handle, image)
             .expect("resize: destination image handle must still be valid");
@@ -299,10 +301,7 @@ impl HitRegions {
     /// used the wrong id type, not "try the next region"; falling through
     /// would silently mask that bug.)
     pub fn hit_at<T: TryFrom<u64>>(&self, pos: (u16, u16)) -> Option<T> {
-        let point = ratatui::layout::Position {
-            x: pos.0,
-            y: pos.1,
-        };
+        let point = ratatui::layout::Position { x: pos.0, y: pos.1 };
         self.regions
             .iter()
             .rev()
@@ -324,7 +323,7 @@ impl HitRegions {
 /// previous frame) - it touches no GPU state and is cheap to call every
 /// frame. The actual GPU render is owned by the plugin's
 /// [`gpu_flush_system`](crate::bevy_plugin::gpu_flush_system), registered
-/// automatically in `TerminalSystemSet::Render`; a render-world system then
+/// automatically right after `TerminalSystemSet::Render`; a render-world system then
 /// copies the result into this `Tui`'s `Image`/`GpuImage` - no CPU
 /// readback, no material touch
 #[derive(Component)]
@@ -398,7 +397,10 @@ impl Tui {
     /// `TerminalDimensions` component or recompute a `TuiKind::WorldQuad`
     /// mesh - both are keyed off this same return value via bevy's
     /// `Changed<T>` filters, not a separate signal.
-    pub(crate) fn apply_pending_resize(&mut self, images: &mut Assets<Image>) -> Option<(u16, u16)> {
+    pub(crate) fn apply_pending_resize(
+        &mut self,
+        images: &mut Assets<Image>,
+    ) -> Option<(u16, u16)> {
         let (cols, rows) = self.pending_resize.take()?;
         self.texture_state.resize(cols, rows, images);
         let backend = self.texture_state.terminal.backend_mut();
@@ -473,7 +475,12 @@ impl Tui {
     }
 
     fn mark_dirty_if_changed(&mut self) {
-        if self.texture_state.terminal.backend().cells_changed_last_draw() {
+        if self
+            .texture_state
+            .terminal
+            .backend()
+            .cells_changed_last_draw()
+        {
             self.dirty = true;
         }
     }
@@ -887,8 +894,7 @@ pub(crate) fn materialize_tui_requests(
             }
             #[cfg(feature = "3d")]
             TuiKind::WorldQuad { height } => {
-                let (Some(meshes), Some(materials)) = (meshes.as_mut(), materials.as_mut())
-                else {
+                let (Some(meshes), Some(materials)) = (meshes.as_mut(), materials.as_mut()) else {
                     tracing::warn!(
                         "TuiRequest dropped: TuiKind::WorldQuad needs Assets<Mesh> and \
                          Assets<StandardMaterial> (registered by bevy's PbrPlugin)"
@@ -933,7 +939,9 @@ pub(crate) fn materialize_tui_requests(
 /// query item into a `Commands::queue` closure every re-claim attempt.
 #[cfg(feature = "3d")]
 #[derive(Clone)]
-struct UntypedMaterialInsert(std::sync::Arc<dyn Fn(Handle<Image>, Entity, &mut World) + Send + Sync>);
+struct UntypedMaterialInsert(
+    std::sync::Arc<dyn Fn(Handle<Image>, Entity, &mut World) + Send + Sync>,
+);
 
 /// How to material a [`AttachTerminal`]-marked mesh. Fully type-erased so
 /// `AttachTerminal` itself never needs a generic parameter - a generic
@@ -1120,8 +1128,16 @@ mod tui_flush_tests {
     #[test]
     fn draw_error_logged_only_once() {
         let mut images = Assets::<Image>::default();
-        let texture_state = TerminalTexture::create(4, 2, test_fonts(), false, false, [0, 0, 0, 255], &mut images)
-            .expect("failed to create terminal texture");
+        let texture_state = TerminalTexture::create(
+            4,
+            2,
+            test_fonts(),
+            false,
+            false,
+            [0, 0, 0, 255],
+            &mut images,
+        )
+        .expect("failed to create terminal texture");
         let mut tui = Tui::from_texture_state(texture_state);
 
         assert!(!tui.draw_error_logged);
@@ -1142,8 +1158,16 @@ mod tui_flush_tests {
     #[test]
     fn identical_redraw_does_not_mark_dirty() {
         let mut images = Assets::<Image>::default();
-        let texture_state = TerminalTexture::create(4, 2, test_fonts(), false, false, [0, 0, 0, 255], &mut images)
-            .expect("failed to create terminal texture");
+        let texture_state = TerminalTexture::create(
+            4,
+            2,
+            test_fonts(),
+            false,
+            false,
+            [0, 0, 0, 255],
+            &mut images,
+        )
+        .expect("failed to create terminal texture");
         let mut tui = Tui::from_texture_state(texture_state);
 
         let paint_red = |frame: &mut ratatui::Frame| {
@@ -1184,8 +1208,8 @@ mod tui_flush_tests {
     /// deferred plan to not make CI depend on GPU availability.
     #[test]
     fn flush_renders_drawn_content_synchronously() {
-        use crate::bevy_plugin::TuiReadbackChannel;
         use crate::bevy_plugin::TerminalPlugin;
+        use crate::bevy_plugin::TuiReadbackChannel;
         use bevy::render::renderer::RenderDevice;
 
         let mut app = App::new();
@@ -1233,8 +1257,16 @@ mod tui_flush_tests {
 
         let entity = {
             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
-            let texture_state = TerminalTexture::create(4, 2, test_fonts(), false, false, [0, 0, 0, 255], &mut images)
-                .expect("failed to create terminal texture");
+            let texture_state = TerminalTexture::create(
+                4,
+                2,
+                test_fonts(),
+                false,
+                false,
+                [0, 0, 0, 255],
+                &mut images,
+            )
+            .expect("failed to create terminal texture");
             let mut tui = Tui::from_texture_state(texture_state);
             tui.draw(|frame| {
                 frame.render_widget(
@@ -1245,12 +1277,7 @@ mod tui_flush_tests {
             app.world_mut().spawn(tui).id()
         };
 
-        let image_id = app
-            .world()
-            .get::<Tui>(entity)
-            .unwrap()
-            .image_handle()
-            .id();
+        let image_id = app.world().get::<Tui>(entity).unwrap().image_handle().id();
         let channel = app.world().resource::<TuiReadbackChannel>().clone();
         let readback = std::thread::spawn(move || channel.request_blocking(image_id));
 
@@ -1282,8 +1309,8 @@ mod tui_flush_tests {
     /// `flush_renders_drawn_content_synchronously`.
     #[test]
     fn flush_renders_partial_redraw_correctly() {
-        use crate::bevy_plugin::TuiReadbackChannel;
         use crate::bevy_plugin::TerminalPlugin;
+        use crate::bevy_plugin::TuiReadbackChannel;
         use bevy::render::renderer::RenderDevice;
 
         let mut app = App::new();
@@ -1333,8 +1360,16 @@ mod tui_flush_tests {
 
         let entity = {
             let mut images = app.world_mut().resource_mut::<Assets<Image>>();
-            let texture_state = TerminalTexture::create(4, 2, test_fonts(), false, false, [0, 0, 0, 255], &mut images)
-                .expect("failed to create terminal texture");
+            let texture_state = TerminalTexture::create(
+                4,
+                2,
+                test_fonts(),
+                false,
+                false,
+                [0, 0, 0, 255],
+                &mut images,
+            )
+            .expect("failed to create terminal texture");
             let mut tui = Tui::from_texture_state(texture_state);
             tui.draw(|frame| paint(frame, RatatuiColor::Green));
             app.world_mut().spawn(tui).id()
@@ -1344,12 +1379,7 @@ mod tui_flush_tests {
         let height_px = app.world().get::<Tui>(entity).unwrap().size_px().y as usize;
         let row0_bytes_len = width_px * 4 * (height_px / 2);
 
-        let image_id = app
-            .world()
-            .get::<Tui>(entity)
-            .unwrap()
-            .image_handle()
-            .id();
+        let image_id = app.world().get::<Tui>(entity).unwrap().image_handle().id();
         let channel = app.world().resource::<TuiReadbackChannel>().clone();
 
         let request_and_wait = |app: &mut App, channel: &TuiReadbackChannel| -> Vec<u8> {
@@ -1390,7 +1420,9 @@ mod tui_flush_tests {
         let row1_before = &pixels_before[row0_bytes_len..];
         let row1_after = &pixels_after[row0_bytes_len..];
         assert!(
-            row1_before.chunks_exact(4).any(|px| px[0..3] == [0, 128, 0]),
+            row1_before
+                .chunks_exact(4)
+                .any(|px| px[0..3] == [0, 128, 0]),
             "row 1 must start out green"
         );
         assert!(
@@ -1589,14 +1621,26 @@ mod resize_tests {
     #[test]
     fn request_resize_updates_grid_and_keeps_the_same_image_handle() {
         let mut images = Assets::<Image>::default();
-        let texture = TerminalTexture::create(4, 2, test_fonts(), false, false, [0, 0, 0, 255], &mut images)
-            .expect("failed to create terminal texture");
+        let texture = TerminalTexture::create(
+            4,
+            2,
+            test_fonts(),
+            false,
+            false,
+            [0, 0, 0, 255],
+            &mut images,
+        )
+        .expect("failed to create terminal texture");
         let original_handle = texture.image_handle();
         let mut tui = Tui::from_texture_state(texture);
 
         tui.request_resize(8, 6);
         let applied = tui.apply_pending_resize(&mut images);
-        assert_eq!(applied, Some((8, 6)), "resize must report the new grid size");
+        assert_eq!(
+            applied,
+            Some((8, 6)),
+            "resize must report the new grid size"
+        );
         assert_eq!(tui.grid_size(), (8, 6));
         assert_eq!(
             tui.image_handle(),
@@ -1613,8 +1657,16 @@ mod resize_tests {
     #[test]
     fn resize_to_the_current_size_is_a_no_op() {
         let mut images = Assets::<Image>::default();
-        let texture = TerminalTexture::create(4, 2, test_fonts(), false, false, [0, 0, 0, 255], &mut images)
-            .expect("failed to create terminal texture");
+        let texture = TerminalTexture::create(
+            4,
+            2,
+            test_fonts(),
+            false,
+            false,
+            [0, 0, 0, 255],
+            &mut images,
+        )
+        .expect("failed to create terminal texture");
         let mut tui = Tui::from_texture_state(texture);
 
         tui.request_resize(4, 2); // same as creation size

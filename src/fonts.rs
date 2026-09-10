@@ -47,9 +47,9 @@ use std::sync::Mutex;
 use bevy::asset::io::Reader;
 use bevy::asset::{Asset, AssetLoader, LoadContext};
 use bevy::reflect::TypePath;
-use tracing::warn;
 use ratatui::buffer::Cell;
 use rustybuzz::Face;
+use tracing::warn;
 
 /// A TrueType font that can be used for text rendering.
 ///
@@ -202,7 +202,11 @@ impl SharedFontCpuState {
         use crate::backend::{CACHE_HEIGHT, CACHE_WIDTH};
         Self {
             cached: crate::utils::text_atlas::Atlas::new(fonts, CACHE_WIDTH, CACHE_HEIGHT),
-            plan_cache: crate::utils::plan_cache::PlanCache::new(fonts.count().max(2)),
+            // Keyed by (font, script, direction), and one row can span
+            // several fonts and scripts now that each font run is shaped
+            // separately - room for a few scripts per font keeps the LRU
+            // from rebuilding plans every row.
+            plan_cache: crate::utils::plan_cache::PlanCache::new(fonts.count().max(2) * 4),
             pending_cache_updates: Vec::new(),
         }
     }
@@ -435,36 +439,48 @@ impl Fonts {
         let is_bold = cell.modifier.contains(ratatui::style::Modifier::BOLD);
         let is_italic = cell.modifier.contains(ratatui::style::Modifier::ITALIC);
 
-
-
-        // Build priority-ordered list of fonts to try
-        let mut fonts_to_try = Vec::new();
-
-        if is_bold && is_italic {
+        // Priority-ordered font slots, each with the fake styling it
+        // implies. A fixed array rather than a collected `Vec`: this runs
+        // for every cell of every reshaped row (`font_runs` in
+        // `bevy_backend.rs`), so it must not allocate.
+        let slots: [(&[Font], bool, bool); 4] = if is_bold && is_italic {
             // Bold + Italic: try bold_italic first, then fall back with fake styling
-            fonts_to_try.extend(self.bold_italic.iter().map(|f| (f, false, false)));
-            fonts_to_try.extend(self.bold.iter().map(|f| (f, false, true)));
-            fonts_to_try.extend(self.italic.iter().map(|f| (f, true, false)));
-            fonts_to_try.extend(self.regular.iter().map(|f| (f, true, true)));
+            [
+                (&self.bold_italic[..], false, false),
+                (&self.bold[..], false, true),
+                (&self.italic[..], true, false),
+                (&self.regular[..], true, true),
+            ]
         } else if is_bold {
             // Bold only: try bold, then fake bold on regular
-            fonts_to_try.extend(self.bold.iter().map(|f| (f, false, false)));
-            fonts_to_try.extend(self.regular.iter().map(|f| (f, true, false)));
-            fonts_to_try.extend(self.italic.iter().map(|f| (f, true, false)));
-            fonts_to_try.extend(self.bold_italic.iter().map(|f| (f, false, false)));
+            [
+                (&self.bold[..], false, false),
+                (&self.regular[..], true, false),
+                (&self.italic[..], true, false),
+                (&self.bold_italic[..], false, false),
+            ]
         } else if is_italic {
             // Italic only: try italic, then fake italic on regular
-            fonts_to_try.extend(self.italic.iter().map(|f| (f, false, false)));
-            fonts_to_try.extend(self.regular.iter().map(|f| (f, false, true)));
-            fonts_to_try.extend(self.bold.iter().map(|f| (f, false, true)));
-            fonts_to_try.extend(self.bold_italic.iter().map(|f| (f, false, false)));
+            [
+                (&self.italic[..], false, false),
+                (&self.regular[..], false, true),
+                (&self.bold[..], false, true),
+                (&self.bold_italic[..], false, false),
+            ]
         } else {
             // Regular: try regular, then any other
-            fonts_to_try.extend(self.regular.iter().map(|f| (f, false, false)));
-            fonts_to_try.extend(self.bold.iter().map(|f| (f, false, false)));
-            fonts_to_try.extend(self.italic.iter().map(|f| (f, false, false)));
-            fonts_to_try.extend(self.bold_italic.iter().map(|f| (f, false, false)));
-        }
+            [
+                (&self.regular[..], false, false),
+                (&self.bold[..], false, false),
+                (&self.italic[..], false, false),
+                (&self.bold_italic[..], false, false),
+            ]
+        };
+        let fonts_to_try = slots
+            .into_iter()
+            .flat_map(|(fonts, fake_bold, fake_italic)| {
+                fonts.iter().map(move |font| (font, fake_bold, fake_italic))
+            });
 
         // Select font with fake styling as last resort
         self.select_font(
@@ -587,7 +603,10 @@ mod font_for_cell_tests {
             bold_id,
             "a real bold font must win over faking bold on the regular font"
         );
-        assert!(!fake_bold && !fake_italic, "a real bold font needs no faking");
+        assert!(
+            !fake_bold && !fake_italic,
+            "a real bold font needs no faking"
+        );
     }
 
     #[test]

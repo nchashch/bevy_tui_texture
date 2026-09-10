@@ -83,7 +83,9 @@ pub enum InputEvent {
     /// readers. The pixel size is what `Tui::request_resize` recipes
     /// actually need (see `examples/resize.rs`); grid changes are always
     /// caller-initiated, so the caller already knows them.
-    Resize { pixels: UVec2 },
+    Resize {
+        pixels: UVec2,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,9 +261,11 @@ impl Default for TerminalInput {
 /// their own.
 fn read_modifiers(keyboard: &ButtonInput<BevyKeyCode>) -> KeyModifiers {
     KeyModifiers {
-        ctrl: keyboard.pressed(BevyKeyCode::ControlLeft) || keyboard.pressed(BevyKeyCode::ControlRight),
+        ctrl: keyboard.pressed(BevyKeyCode::ControlLeft)
+            || keyboard.pressed(BevyKeyCode::ControlRight),
         alt: keyboard.pressed(BevyKeyCode::AltLeft) || keyboard.pressed(BevyKeyCode::AltRight),
-        shift: keyboard.pressed(BevyKeyCode::ShiftLeft) || keyboard.pressed(BevyKeyCode::ShiftRight),
+        shift: keyboard.pressed(BevyKeyCode::ShiftLeft)
+            || keyboard.pressed(BevyKeyCode::ShiftRight),
         meta: keyboard.pressed(BevyKeyCode::SuperLeft) || keyboard.pressed(BevyKeyCode::SuperRight),
     }
 }
@@ -395,14 +399,19 @@ pub fn keyboard_input_system(
             ButtonState::Pressed if key_event.repeat => KeyEventKind::Repeat,
             ButtonState::Pressed => KeyEventKind::Press,
         };
-        let Some(code) = keycode_from_logical(&key_event.logical_key, modifiers.shift, key_event.key_code)
+        let Some(code) =
+            keycode_from_logical(&key_event.logical_key, modifiers.shift, key_event.key_code)
         else {
             continue;
         };
 
         events.write(TerminalEvent {
             target,
-            input: InputEvent::Key(KeyEvent { code, modifiers, kind }),
+            input: InputEvent::Key(KeyEvent {
+                code,
+                modifiers,
+                kind,
+            }),
         });
     }
 }
@@ -515,7 +524,11 @@ pub struct MouseChangeProbes<'w, 's> {
         (),
         (
             With<Camera>,
-            Or<(Changed<GlobalTransform>, Changed<Projection>, Changed<Camera>)>,
+            Or<(
+                Changed<GlobalTransform>,
+                Changed<Projection>,
+                Changed<Camera>,
+            )>,
         ),
     >,
     terminal_3d: Query<'w, 's, (), (With<TerminalInput>, Changed<GlobalTransform>)>,
@@ -525,7 +538,10 @@ pub struct MouseChangeProbes<'w, 's> {
         (),
         (
             With<TerminalInput>,
-            Or<(Changed<bevy::ui::ComputedNode>, Changed<bevy::ui::UiGlobalTransform>)>,
+            Or<(
+                Changed<bevy::ui::ComputedNode>,
+                Changed<bevy::ui::UiGlobalTransform>,
+            )>,
         ),
     >,
 }
@@ -569,7 +585,14 @@ fn detect_terminal_type(
 /// (`cols - 1`/`rows - 1`), never `cols`/`rows` themselves - those would be
 /// one past the last valid grid index.
 #[cfg(all(feature = "mouse_input", feature = "2d"))]
-fn pixel_to_cell(local_x: f32, local_y: f32, char_width: f32, char_height: f32, cols: u16, rows: u16) -> (u16, u16) {
+fn pixel_to_cell(
+    local_x: f32,
+    local_y: f32,
+    char_width: f32,
+    char_height: f32,
+    cols: u16,
+    rows: u16,
+) -> (u16, u16) {
     let max_col = cols.saturating_sub(1) as f32;
     let max_row = rows.saturating_sub(1) as f32;
     let col = (local_x.max(0.0) / char_width).min(max_col) as u16;
@@ -719,7 +742,14 @@ fn bounding_box_hit_test(
     );
 
     // Convert to terminal grid coordinates
-    let (col, row) = pixel_to_cell(local_x, local_y, char_width, char_height, cols as u16, rows as u16);
+    let (col, row) = pixel_to_cell(
+        local_x,
+        local_y,
+        char_width,
+        char_height,
+        cols as u16,
+        rows as u16,
+    );
 
     debug!("Hit test result: col={}, row={}", col, row);
 
@@ -1325,7 +1355,10 @@ pub fn mouse_input_system(
         (),
         (
             With<TerminalInput>,
-            Or<(Changed<bevy::ui::ComputedNode>, Changed<bevy::ui::UiGlobalTransform>)>,
+            Or<(
+                Changed<bevy::ui::ComputedNode>,
+                Changed<bevy::ui::UiGlobalTransform>,
+            )>,
         ),
     >,
     mut last_cursor_pos: Local<Option<Vec2>>,
@@ -1347,7 +1380,11 @@ pub fn mouse_input_system(
         || buttons.get_just_released().len() > 0
         || touches.any_just_pressed()
         || touches.any_just_released();
-    if !cursor_moved && !button_transition && terminal_ui_changed.is_empty() && wheel_messages.is_empty() {
+    if !cursor_moved
+        && !button_transition
+        && terminal_ui_changed.is_empty()
+        && wheel_messages.is_empty()
+    {
         return;
     }
     *last_cursor_pos = Some(cursor_pos);
@@ -1446,7 +1483,11 @@ pub fn mouse_input_system(
         (),
         (
             With<Camera>,
-            Or<(Changed<GlobalTransform>, Changed<Projection>, Changed<Camera>)>,
+            Or<(
+                Changed<GlobalTransform>,
+                Changed<Projection>,
+                Changed<Camera>,
+            )>,
         ),
     >,
     terminal_3d_changed: Query<(), (With<TerminalInput>, Changed<GlobalTransform>)>,
@@ -1774,8 +1815,8 @@ mod tests {
     #[cfg(feature = "mouse_input")]
     mod move_kind_tests {
         use super::super::move_kind;
-        use bevy::input::mouse::MouseButton;
         use crate::input::MouseEventKind;
+        use bevy::input::mouse::MouseButton;
 
         #[test]
         fn no_buttons_is_moved() {

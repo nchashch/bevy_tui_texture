@@ -565,8 +565,22 @@ pub fn render(c: char, width: u32, height: u32) -> Option<Pixmap> {
             draw_vertical_line(&mut pixmap, center_x - gap, thin_stroke, color);
             draw_vertical_line(&mut pixmap, center_x + gap, thin_stroke, color);
             // Draw double horizontal lines to the right (to connect to both vertical lines)
-            draw_rect(&mut pixmap, center_x - gap, center_y - gap - thin_stroke / 2.0, w / 2.0 + gap, thin_stroke, color);
-            draw_rect(&mut pixmap, center_x - gap, center_y + gap - thin_stroke / 2.0, w / 2.0 + gap, thin_stroke, color);
+            draw_rect(
+                &mut pixmap,
+                center_x - gap,
+                center_y - gap - thin_stroke / 2.0,
+                w / 2.0 + gap,
+                thin_stroke,
+                color,
+            );
+            draw_rect(
+                &mut pixmap,
+                center_x - gap,
+                center_y + gap - thin_stroke / 2.0,
+                w / 2.0 + gap,
+                thin_stroke,
+                color,
+            );
         }
         '╣' => {
             // U+2563 Double vertical and single left
@@ -576,8 +590,22 @@ pub fn render(c: char, width: u32, height: u32) -> Option<Pixmap> {
             draw_vertical_line(&mut pixmap, center_x - gap, thin_stroke, color);
             draw_vertical_line(&mut pixmap, center_x + gap, thin_stroke, color);
             // Draw double horizontal lines to the left (to connect to both vertical lines)
-            draw_rect(&mut pixmap, 0.0, center_y - gap - thin_stroke / 2.0, center_x + gap, thin_stroke, color);
-            draw_rect(&mut pixmap, 0.0, center_y + gap - thin_stroke / 2.0, center_x + gap, thin_stroke, color);
+            draw_rect(
+                &mut pixmap,
+                0.0,
+                center_y - gap - thin_stroke / 2.0,
+                center_x + gap,
+                thin_stroke,
+                color,
+            );
+            draw_rect(
+                &mut pixmap,
+                0.0,
+                center_y + gap - thin_stroke / 2.0,
+                center_x + gap,
+                thin_stroke,
+                color,
+            );
         }
         '╦' => {
             // U+2566 Double down and single horizontal
@@ -587,8 +615,22 @@ pub fn render(c: char, width: u32, height: u32) -> Option<Pixmap> {
             draw_horizontal_line(&mut pixmap, center_y - gap, thin_stroke, color);
             draw_horizontal_line(&mut pixmap, center_y + gap, thin_stroke, color);
             // Draw double vertical lines downward (to connect to the horizontal lines)
-            draw_rect(&mut pixmap, center_x - gap - thin_stroke / 2.0, center_y - gap, thin_stroke, h / 2.0 + gap, color);
-            draw_rect(&mut pixmap, center_x + gap - thin_stroke / 2.0, center_y - gap, thin_stroke, h / 2.0 + gap, color);
+            draw_rect(
+                &mut pixmap,
+                center_x - gap - thin_stroke / 2.0,
+                center_y - gap,
+                thin_stroke,
+                h / 2.0 + gap,
+                color,
+            );
+            draw_rect(
+                &mut pixmap,
+                center_x + gap - thin_stroke / 2.0,
+                center_y - gap,
+                thin_stroke,
+                h / 2.0 + gap,
+                color,
+            );
         }
         '╩' => {
             // U+2569 Double up and single horizontal
@@ -598,8 +640,22 @@ pub fn render(c: char, width: u32, height: u32) -> Option<Pixmap> {
             draw_horizontal_line(&mut pixmap, center_y - gap, thin_stroke, color);
             draw_horizontal_line(&mut pixmap, center_y + gap, thin_stroke, color);
             // Draw double vertical lines upward (to connect to the horizontal lines)
-            draw_rect(&mut pixmap, center_x - gap - thin_stroke / 2.0, 0.0, thin_stroke, center_y + gap, color);
-            draw_rect(&mut pixmap, center_x + gap - thin_stroke / 2.0, 0.0, thin_stroke, center_y + gap, color);
+            draw_rect(
+                &mut pixmap,
+                center_x - gap - thin_stroke / 2.0,
+                0.0,
+                thin_stroke,
+                center_y + gap,
+                color,
+            );
+            draw_rect(
+                &mut pixmap,
+                center_x + gap - thin_stroke / 2.0,
+                0.0,
+                thin_stroke,
+                center_y + gap,
+                color,
+            );
         }
         '╬' => {
             // U+256C Double vertical and single horizontal
@@ -621,8 +677,22 @@ pub fn render(c: char, width: u32, height: u32) -> Option<Pixmap> {
             // Draw single vertical line
             draw_vertical_line(&mut pixmap, center_x, stroke, color);
             // Draw double horizontal lines to the right
-            draw_rect(&mut pixmap, center_x, center_y - gap - thin_stroke / 2.0, w / 2.0, thin_stroke, color);
-            draw_rect(&mut pixmap, center_x, center_y + gap - thin_stroke / 2.0, w / 2.0, thin_stroke, color);
+            draw_rect(
+                &mut pixmap,
+                center_x,
+                center_y - gap - thin_stroke / 2.0,
+                w / 2.0,
+                thin_stroke,
+                color,
+            );
+            draw_rect(
+                &mut pixmap,
+                center_x,
+                center_y + gap - thin_stroke / 2.0,
+                w / 2.0,
+                thin_stroke,
+                color,
+            );
         }
         '╡' => {
             // U+2561 Vertical single and left double
@@ -631,8 +701,22 @@ pub fn render(c: char, width: u32, height: u32) -> Option<Pixmap> {
             // Draw single vertical line
             draw_vertical_line(&mut pixmap, center_x, stroke, color);
             // Draw double horizontal lines to the left
-            draw_rect(&mut pixmap, 0.0, center_y - gap - thin_stroke / 2.0, center_x, thin_stroke, color);
-            draw_rect(&mut pixmap, 0.0, center_y + gap - thin_stroke / 2.0, center_x, thin_stroke, color);
+            draw_rect(
+                &mut pixmap,
+                0.0,
+                center_y - gap - thin_stroke / 2.0,
+                center_x,
+                thin_stroke,
+                color,
+            );
+            draw_rect(
+                &mut pixmap,
+                0.0,
+                center_y + gap - thin_stroke / 2.0,
+                center_x,
+                thin_stroke,
+                color,
+            );
         }
         '╤' => {
             // U+2564 Down single and horizontal double
@@ -642,7 +726,14 @@ pub fn render(c: char, width: u32, height: u32) -> Option<Pixmap> {
             draw_horizontal_line(&mut pixmap, center_y - gap, thin_stroke, color);
             draw_horizontal_line(&mut pixmap, center_y + gap, thin_stroke, color);
             // Draw single vertical line downward (connecting between the double horizontal lines)
-            draw_rect(&mut pixmap, center_x - stroke / 2.0, center_y - gap, stroke, h / 2.0 + gap, color);
+            draw_rect(
+                &mut pixmap,
+                center_x - stroke / 2.0,
+                center_y - gap,
+                stroke,
+                h / 2.0 + gap,
+                color,
+            );
         }
         '╧' => {
             // U+2567 Up single and horizontal double
@@ -652,7 +743,14 @@ pub fn render(c: char, width: u32, height: u32) -> Option<Pixmap> {
             draw_horizontal_line(&mut pixmap, center_y - gap, thin_stroke, color);
             draw_horizontal_line(&mut pixmap, center_y + gap, thin_stroke, color);
             // Draw single vertical line upward (connecting between the double horizontal lines)
-            draw_rect(&mut pixmap, center_x - stroke / 2.0, 0.0, stroke, center_y + gap, color);
+            draw_rect(
+                &mut pixmap,
+                center_x - stroke / 2.0,
+                0.0,
+                stroke,
+                center_y + gap,
+                color,
+            );
         }
         '╪' => {
             // U+256A Vertical single and horizontal double

@@ -27,7 +27,8 @@ pub enum TerminalSystemSet {
     Input,
     /// User update systems (runs after Input)
     UserUpdate,
-    /// Rendering systems (runs late)
+    /// Rendering systems (runs late). The plugin flushes every dirty `Tui`
+    /// right after this set, so draws made here reach the GPU this frame.
     Render,
 }
 
@@ -177,15 +178,13 @@ impl Plugin for TerminalPlugin {
         // draw payload from dirty terminals, so user drawing systems can
         // take zero render-resource parameters. The actual GPU render
         // happens in the render world - see `extract_tui_draws` /
-        // `render_tui_textures` below.
-        app.add_systems(Update, gpu_flush_system.in_set(TerminalSystemSet::Render));
+        // `render_tui_textures` below. Ordered after the whole Render set
+        // rather than inside it: inside, it was ambiguous with the user's
+        // draw systems, and a draw that happened to run after the flush
+        // reached the GPU a frame late.
+        app.add_systems(Update, gpu_flush_system.after(TerminalSystemSet::Render));
         #[cfg(feature = "3d")]
-        app.add_systems(
-            Update,
-            resize_world_quad_meshes
-                .after(gpu_flush_system)
-                .in_set(TerminalSystemSet::Render),
-        );
+        app.add_systems(Update, resize_world_quad_meshes.after(gpu_flush_system));
 
         // Attaching a Tui to an existing mesh. Runs early so the same-frame
         // Render pass sees the swapped material.
@@ -278,7 +277,8 @@ pub struct TerminalDimensions {
 // ============================================================================
 
 /// Plugin-owned CPU flush for every [`Tui`] entity. Registered automatically
-/// by [`TerminalPlugin`] in `TerminalSystemSet::Render`. If dirty, extracts
+/// by [`TerminalPlugin`] in `Update`, after `TerminalSystemSet::Render` - so
+/// every draw made in that set is flushed this same frame. If dirty, extracts
 /// a `TerminalDrawPayload` from the backend and stashes it for
 /// `extract_tui_draws` to pick up; see [`Tui::flush`](crate::setup::Tui) for
 /// details. Pure CPU work - no `RenderDevice`/`RenderQueue` needed at all,
@@ -306,14 +306,18 @@ pub fn gpu_flush_system(
 
 /// Recomputes a [`TuiKind::WorldQuad`](crate::setup::TuiKind::WorldQuad)
 /// terminal's mesh aspect ratio after a resize. Registered automatically by
-/// `TerminalPlugin` (feature `3d`), after `gpu_flush_system` in the same
-/// `TerminalSystemSet::Render` - keyed on `Changed<TerminalDimensions>`
+/// `TerminalPlugin` (feature `3d`), after `gpu_flush_system` (itself after
+/// `TerminalSystemSet::Render`) - keyed on `Changed<TerminalDimensions>`
 /// rather than a separate signal, since `gpu_flush_system` only writes that
 /// component when a resize actually happened.
 #[cfg(feature = "3d")]
 fn resize_world_quad_meshes(
     mut terminals: Query<
-        (&TerminalDimensions, &crate::setup::WorldQuadHeight, &mut Mesh3d),
+        (
+            &TerminalDimensions,
+            &crate::setup::WorldQuadHeight,
+            &mut Mesh3d,
+        ),
         Changed<TerminalDimensions>,
     >,
     // `Option`: only exists once something registers it (bevy's PbrPlugin,
@@ -474,9 +478,27 @@ fn render_tui_textures(
     // `TerminalGpuStore` does below, hence the separate liveness set.
     font_store.0.retain(|key, _| live_fonts.0.contains(key));
 
+    // Glyph uploads can arrive in a frame with no draw for their font: a
+    // `Tui::draw` made after `gpu_flush_system` (from a system outside
+    // `TerminalSystemSet`, say) is only flushed next frame, and a payload
+    // whose destination isn't prepared yet is retried later - while the
+    // rasterizations are extracted right away. The CPU-side atlas already
+    // marks these glyphs cached,
+    // so discarding the uploads here would leave them invisible for good.
+    // Upload to every atlas that already exists; keep the rest (for fonts
+    // whose GPU state is created below, on their first draw) until then.
+    for (key, uploads) in &mut font_uploads.0 {
+        if let Some(shared) = font_store.0.get(key) {
+            shared.upload_glyphs(render_queue.0.as_ref(), uploads);
+            uploads.clear();
+        }
+    }
+    font_uploads
+        .0
+        .retain(|key, uploads| !uploads.is_empty() && live_fonts.0.contains(key));
+
     if pending.0.is_empty() {
         store.0.retain(|dest, _| gpu_images.get(*dest).is_some());
-        font_uploads.0.clear();
         return;
     }
 
@@ -514,7 +536,6 @@ fn render_tui_textures(
     });
 
     store.0.retain(|dest, _| gpu_images.get(*dest).is_some());
-    font_uploads.0.clear();
 }
 
 /// Submits every command buffer [`render_tui_textures`] recorded via
@@ -651,9 +672,8 @@ fn strip_row_padding(
         for y in 0..height {
             let src_offset = (y * bytes_per_row) as usize;
             let dst_offset = (y * unpadded_bytes_per_row) as usize;
-            out[dst_offset..dst_offset + unpadded_bytes_per_row as usize].copy_from_slice(
-                &padded[src_offset..src_offset + unpadded_bytes_per_row as usize],
-            );
+            out[dst_offset..dst_offset + unpadded_bytes_per_row as usize]
+                .copy_from_slice(&padded[src_offset..src_offset + unpadded_bytes_per_row as usize]);
         }
     }
     out
@@ -681,11 +701,12 @@ fn read_back_gpu_image_blocking(
             mapped_at_creation: false,
         });
 
-    let mut encoder = render_device
-        .wgpu_device()
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Terminal Readback Encoder"),
-        });
+    let mut encoder =
+        render_device
+            .wgpu_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Terminal Readback Encoder"),
+            });
     encoder.copy_texture_to_buffer(
         texture.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
@@ -778,7 +799,11 @@ mod row_padding_tests {
             5, 6, 7, 8, 0xAA, 0xAA, // row 1: 4 real bytes + 2 padding bytes
         ];
         let out = strip_row_padding(&padded, 4, 6, 2);
-        assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7, 8], "padding bytes must be dropped, real bytes kept in row order");
+        assert_eq!(
+            out,
+            vec![1, 2, 3, 4, 5, 6, 7, 8],
+            "padding bytes must be dropped, real bytes kept in row order"
+        );
     }
 
     #[test]
@@ -788,4 +813,3 @@ mod row_padding_tests {
         assert_eq!(out, vec![9, 9, 9, 9]);
     }
 }
-

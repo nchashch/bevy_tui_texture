@@ -68,7 +68,10 @@ pub(crate) const CACHE_HEIGHT: u32 = 2048;
 // Compositor builders
 use wgpu::*;
 
-pub(crate) fn build_text_bg_compositor(device: &Device, format: TextureFormat) -> TextCacheBgPipeline {
+pub(crate) fn build_text_bg_compositor(
+    device: &Device,
+    format: TextureFormat,
+) -> TextCacheBgPipeline {
     let bg_shader = device.create_shader_module(ShaderModuleDescriptor {
         label: Some("BG Compositor Shader"),
         source: ShaderSource::Wgsl(include_str!("shaders/composite_bg.wgsl").into()),
@@ -133,7 +136,9 @@ pub(crate) fn build_text_bg_compositor(device: &Device, format: TextureFormat) -
         cache: None,
     });
 
-    TextCacheBgPipeline { pipeline: bg_pipeline }
+    TextCacheBgPipeline {
+        pipeline: bg_pipeline,
+    }
 }
 
 pub(crate) fn build_text_fg_compositor(
@@ -341,7 +346,6 @@ pub(crate) struct TextCacheFgPipeline {
     atlas_bindings: BindGroup,
 }
 
-
 fn c2c(color: ratatui::style::Color, reset: Rgb) -> Rgb {
     match color {
         Color::Reset => reset,
@@ -448,7 +452,13 @@ impl TerminalDrawPayload {
 /// wgpu's tracker up front. See the call sites in `TerminalGpuState::new`
 /// for why this matters (avoiding wgpu's implicit lazy-init clear, and the
 /// WebGL console warning it produces, on the first partial write/sample).
-fn zero_init_texture(queue: &Queue, texture: &Texture, width: u32, height: u32, bytes_per_pixel: u32) {
+fn zero_init_texture(
+    queue: &Queue,
+    texture: &Texture,
+    width: u32,
+    height: u32,
+    bytes_per_pixel: u32,
+) {
     let zeros = vec![0u8; (width * height * bytes_per_pixel) as usize];
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
@@ -714,8 +724,9 @@ impl TerminalGpuState {
             usage: BufferUsages::INDEX,
         });
 
-        let bg_vertex_buffer_capacity_bytes =
-            INITIAL_INDEX_QUAD_CAPACITY as u64 * 4 * std::mem::size_of::<TextBgVertexMember>() as u64;
+        let bg_vertex_buffer_capacity_bytes = INITIAL_INDEX_QUAD_CAPACITY as u64
+            * 4
+            * std::mem::size_of::<TextBgVertexMember>() as u64;
         let bg_vertex_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("Text Bg Vertices"),
             size: bg_vertex_buffer_capacity_bytes,
@@ -851,7 +862,11 @@ impl TerminalGpuState {
                 "Text Bg Vertices",
             );
             if bg_bytes > 0 {
-                queue.write_buffer(&self.bg_vertex_buffer, 0, bytemuck::cast_slice(&draw.bg_vertices));
+                queue.write_buffer(
+                    &self.bg_vertex_buffer,
+                    0,
+                    bytemuck::cast_slice(&draw.bg_vertices),
+                );
             }
 
             let fg_bytes = bytemuck::cast_slice::<_, u8>(&draw.text_vertices).len() as u64;
@@ -864,7 +879,11 @@ impl TerminalGpuState {
                 "Text Vertices",
             );
             if fg_bytes > 0 {
-                queue.write_buffer(&self.fg_vertex_buffer, 0, bytemuck::cast_slice(&draw.text_vertices));
+                queue.write_buffer(
+                    &self.fg_vertex_buffer,
+                    0,
+                    bytemuck::cast_slice(&draw.text_vertices),
+                );
             }
 
             let mut text_render_pass = encoder.begin_render_pass(&RenderPassDescriptor {

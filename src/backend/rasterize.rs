@@ -75,8 +75,8 @@ fn calculate_bold_offset(metrics: &rustybuzz::Face, render_scale: f32) -> f32 {
 
     // Calculate weight factor: 0.0 for normal weight, scaling up for heavier fonts
     // Clamped to prevent excessive bolding on extra-bold fonts
-    let weight_factor = ((font_weight - FONT_WEIGHT_NORMAL) / FONT_WEIGHT_BOLD_DELTA)
-        .clamp(0.0, MAX_WEIGHT_FACTOR);
+    let weight_factor =
+        ((font_weight - FONT_WEIGHT_NORMAL) / FONT_WEIGHT_BOLD_DELTA).clamp(0.0, MAX_WEIGHT_FACTOR);
 
     // Get font-specific stroke thickness from underline metrics if available,
     // otherwise use a reasonable default based on em-square size
@@ -120,6 +120,7 @@ pub(super) fn rasterize_glyph(
     advance_scale: f32,
     actual_width: u32,
     bearing_offset_x: f32, // Horizontal bearing offset from rustybuzz
+    fit_x: f32,            // Horizontal squeeze (<= 1.0) fitting a too-wide glyph into its cells
 ) -> (CacheRect, Vec<u32>) {
     let scale = cached.width as f32 / actual_width as f32;
     // Apply bearing offset to position glyph within atlas entry
@@ -140,7 +141,6 @@ pub(super) fn rasterize_glyph(
         Transform::default()
     };
 
-
     let mut image = vec![0u32; cached.width as usize * 2 * cached.height as usize * 2];
     let mut target = DrawTarget::from_backing(
         cached.width as i32 * 2,
@@ -151,7 +151,9 @@ pub(super) fn rasterize_glyph(
     let mut painter = Painter::new(
         metrics,
         &mut target,
-        skew,
+        // `Painter` applies this after its uniform `scale`, so the
+        // squeeze lands on x alone - same as the outline path below.
+        Transform::scale(fit_x, 1.0).then(&skew),
         scale,
         metrics.ascender() as f32 * scale + computed_offset_y,
         computed_offset_x,
@@ -211,7 +213,7 @@ pub(super) fn rasterize_glyph(
         } else {
             0.
         };
-        let x_off = x_off * scale + computed_offset_x;
+        let x_off = x_off * scale * fit_x + computed_offset_x;
         let y_off = metrics.ascender() as f32 * scale + computed_offset_y;
 
         let mut target = DrawTarget::from_backing(
@@ -220,7 +222,7 @@ pub(super) fn rasterize_glyph(
             &mut image[..],
         );
         target.set_transform(
-            &Transform::scale(scale, -scale)
+            &Transform::scale(scale * fit_x, -scale)
                 .then(&skew)
                 .then_translate((x_off, y_off).into()),
         );
