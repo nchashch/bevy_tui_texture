@@ -107,8 +107,23 @@ impl TerminalPlugin {
 impl Plugin for TerminalPlugin {
     fn build(&self, app: &mut App) {
         // Fonts loadable via the AssetServer.
-        app.init_asset::<crate::fonts::TerminalFontAsset>()
-            .init_asset_loader::<crate::fonts::TerminalFontAssetLoader>();
+        //
+        // LOCAL PATCH (prototype_19): `init_asset_loader` intentionally *not* called. Bevy has no
+        // per-(extension, requested-type) disambiguation for `bevy_asset_loader`'s dynamic-asset
+        // system (used by games that load fonts via a runtime-configured manifest, not a
+        // compile-time `asset_server.load::<Font>(path)` call) — with this loader registered
+        // *and* another game font also loaded via that path, `bevy_asset_loader`'s own loading-
+        // state check panicked at startup on a totally unrelated font (`bevy_asset`'s "target
+        // Handle<Font>'s TypeId does not match the TypeId of this UntypedHandle"), regardless of
+        // registration order relative to `DefaultPlugins` (tried both — the other order instead
+        // panics because `AssetServer` doesn't exist yet). `TuiFontSource::Asset` is unusable
+        // while this stays disabled (falls back to Bevy's normal "no loader for extension/type"
+        // error, not a panic) — `TuiFontSource::Ready` (`Font::new`/`Fonts::new` from embedded or
+        // runtime bytes, bypassing `AssetServer` entirely) is unaffected and still the
+        // recommended path for a project that also uses `bevy_asset_loader`'s dynamic assets.
+        // `init_asset` alone (registering the `Assets<TerminalFontAsset>` storage/type) is kept:
+        // harmless on its own, and satisfies anything expecting the resource to exist.
+        app.init_asset::<crate::fonts::TerminalFontAsset>();
 
         // Register messages (events)
         app.add_message::<TerminalEvent>();
